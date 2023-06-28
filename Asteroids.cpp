@@ -66,6 +66,12 @@ struct Explosion {
 	int frame;
 };
 
+enum ProjectileHitPower {
+	POWER_LOW = 1,
+	POWER_MEDIUM = 2,
+	POWER_HIGH = 4
+};
+
 struct Projectile {
 	float posX;
 	float posY;
@@ -73,12 +79,14 @@ struct Projectile {
 	float movY;
 	bool active;
 	int frame;
+	ProjectileHitPower hitPower;
+	Gdiplus::Color color;
 };
 
 enum AsteroidSize {
-	SMALL = 10,
-	MEDIUM = 20,
-	BIG = 30
+	SIZE_SMALL = 10,
+	SIZE_MEDIUM = 20,
+	SIZE_BIG = 30
 };
 
 enum AsteroidMaterial {
@@ -99,6 +107,7 @@ struct Asteroid {
 	float centroidX;
 	float centroidY;
 	std::chrono::steady_clock::time_point lastSeen;
+	Gdiplus::Color color;
 };
 
 struct Spaceship {
@@ -133,6 +142,12 @@ struct LeaderboardEntry {
 	int score;
 };
 
+struct Bonus {
+	int scoreThreshold; // The amount of points required to get the bonus
+	int extraScore; // The extra score given as a bonus
+	ProjectileHitPower powerUpgrade; // The power to upgrade the projectiles to
+};
+
 int screenWidth = 0;
 int screenHeight = 0;
 int gameScore = 0;
@@ -140,6 +155,11 @@ int difficultyLevel = 0;
 int activeAsteroids = 0;
 int lives = 3;
 bool DEBUG = false;
+
+int bonusScore = 0;
+std::chrono::steady_clock::time_point bonusStartTime;
+ProjectileHitPower currentProjectilePower = POWER_LOW;
+Bonus currentBonus;
 
 bool isGameActive = false;
 bool isGamePaused = false;
@@ -151,8 +171,13 @@ Spaceship spaceship;
 LevelDisplay levelDisplay;
 GameOverDisplay gameOverDisplay;
 std::vector<LeaderboardEntry> leaderboard;
-int asteroidMaterialHitPoints[] = {1, 8, 16};
+int asteroidMaterialHitPoints[] = { 1, 8, 16 };
 int asteroidMaterialColor[] = { Gdiplus::Color::SaddleBrown, Gdiplus::Color::LightBlue, Gdiplus::Color::Gray };
+Gdiplus::Color projectilesColor[] = { Gdiplus::Color::White, Gdiplus::Color::Orange, Gdiplus::Color::Navy };
+Bonus bonuses[2] = {
+	{1500, 200, ProjectileHitPower::POWER_MEDIUM},
+	{3500, 500, ProjectileHitPower::POWER_HIGH}
+};
 
 std::vector<std::vector<Gdiplus::Point>> asteroidModels = {
 	{ {-20, -10}, {-10, -25}, {10, -20}, {20, -10}, {20, 10}, {10, 20}, {-10, 20} }, // Heptagon 1
@@ -166,13 +191,13 @@ std::vector<std::vector<Gdiplus::Point>> asteroidModels = {
 int numPointsFromSize(AsteroidSize size) {
 	int numPoints = 3;
 	switch(size) {
-	case SMALL:
+	case SIZE_SMALL:
 		numPoints = 3;
 		break;
-	case MEDIUM:
+	case SIZE_MEDIUM:
 		numPoints = 4;
 		break;
-	case BIG:
+	case SIZE_BIG:
 		numPoints = 5;
 		break;
 	default:
@@ -181,9 +206,63 @@ int numPointsFromSize(AsteroidSize size) {
 	return numPoints;
 }
 
+Gdiplus::Color colorFromProjectilePower(ProjectileHitPower power) {
+	switch(power)
+	{
+	case POWER_LOW:
+		return projectilesColor[0];
+		break;
+	case POWER_MEDIUM:
+		return projectilesColor[1];
+		break;
+	case POWER_HIGH:
+		return projectilesColor[2];
+		break;
+	default:
+		return projectilesColor[0];
+		break;
+	}
+}
+
+int hitPointsFromAsteroidMaterial(AsteroidMaterial material) {
+	switch(material)
+	{
+	case ROCK:
+		return asteroidMaterialHitPoints[0];
+		break;
+	case ICE:
+		return asteroidMaterialHitPoints[1];
+		break;
+	case IRON:
+		return asteroidMaterialHitPoints[2];
+		break;
+	default:
+		return asteroidMaterialHitPoints[0];
+		break;
+	}
+}
+
+Gdiplus::Color colorFromAsteroidMaterial(AsteroidMaterial material) {
+	switch(material)
+	{
+	case ROCK:
+		return asteroidMaterialColor[0];
+		break;
+	case ICE:
+		return asteroidMaterialColor[1];
+		break;
+	case IRON:
+		return asteroidMaterialColor[2];
+		break;
+	default:
+		return asteroidMaterialColor[0];
+		break;
+	}
+}
+
 // -------------------------------------------------------------------------------- INIZIALIZZAZIONE
 
-void createAsteroid(Asteroid& asteroid, int screenWidth, int screenHeight)
+void createAsteroid(Asteroid& asteroid, int screenWidth, int screenHeight, bool resetMaterial = true)
 {
 	// Calculate max asteroid speed based on difficulty
 	int maxAsteroidSpeed = 2 + difficultyLevel * 1;
@@ -219,7 +298,7 @@ void createAsteroid(Asteroid& asteroid, int screenWidth, int screenHeight)
 		randomMovY = (rand() % 2) ? 0.1 : -0.1;
 	}
 
-	asteroid.movX = randomMovX; 
+	asteroid.movX = randomMovX;
 	asteroid.movY = randomMovY;
 
 	// Initialize the points for each asteroid
@@ -246,35 +325,38 @@ void createAsteroid(Asteroid& asteroid, int screenWidth, int screenHeight)
 	asteroid.centroidX = sumX / numPoints;
 	asteroid.centroidY = sumY / numPoints;
 
-	// Determine asteroid type based on the difficultyLevel
-	if(difficultyLevel < 15) {
-		asteroid.material = ROCK;
-	}
-	else if(difficultyLevel < 35) {
-		// Generate a random number between 0 and 1
-		float random = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
-		if(random < 0.5) {  // Half the time it should be ROCK
+	if(resetMaterial) {
+		// Determine asteroid type based on the difficultyLevel
+		if(difficultyLevel < 15) {
 			asteroid.material = ROCK;
 		}
-		else {  // The other half it should be ICE
-			asteroid.material = ICE;
-		}
-	}
-	else {
-		// Generate a random number between 0 and 1
-		float random = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
-		float ironThreshold = static_cast <float> (difficultyLevel - 35) / 65.0f;
-		if(random < ironThreshold) {
-			asteroid.material = IRON;
-		}
-		else if(random < (ironThreshold + (1.0f - ironThreshold) / 2)) {
-			asteroid.material = ICE;
+		else if(difficultyLevel < 35) {
+			// Generate a random number between 0 and 1
+			float random = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+			if(random < 0.5) {  // Half the time it should be ROCK
+				asteroid.material = ROCK;
+			}
+			else {  // The other half it should be ICE
+				asteroid.material = ICE;
+			}
 		}
 		else {
-			asteroid.material = ROCK;
+			// Generate a random number between 0 and 1
+			float random = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+			float ironThreshold = static_cast <float> (difficultyLevel - 35) / 65.0f;
+			if(random < ironThreshold) {
+				asteroid.material = IRON;
+			}
+			else if(random < (ironThreshold + (1.0f - ironThreshold) / 2)) {
+				asteroid.material = ICE;
+			}
+			else {
+				asteroid.material = ROCK;
+			}
 		}
+		asteroid.hitPoints = hitPointsFromAsteroidMaterial(asteroid.material);
+		asteroid.color = colorFromAsteroidMaterial(asteroid.material);
 	}
-	asteroid.hitPoints = asteroidMaterialHitPoints[asteroid.material];
 
 	asteroid.active = true;
 }
@@ -348,6 +430,9 @@ void createProjectile(Projectile projectiles[], Spaceship& spaceship) {
 			// Mark the projectile as active
 			projectiles[i].active = true;
 			projectiles[i].frame = 0;
+
+			projectiles[i].hitPower = currentProjectilePower;
+			projectiles[i].color = colorFromProjectilePower(currentProjectilePower);
 			break;
 		}
 	}
@@ -450,7 +535,7 @@ void updateAsteroid(Asteroid& asteroid, int screenWidth, int screenHeight) {
 		// If the asteroid has been off-screen for more than a given threshold (here MAX_TIME_OUTOFTHESCREEN seconds), 
 		// reposition it to a random position at the edge of the screen
 		if(std::chrono::steady_clock::now() - asteroid.lastSeen > std::chrono::seconds(MAX_TIME_OUTOFTHESCREEN)) {
-			createAsteroid(asteroid, screenWidth, screenHeight);
+			createAsteroid(asteroid, screenWidth, screenHeight, false);
 		}
 	}
 	else {
@@ -539,7 +624,6 @@ void updateProjectiles(Projectile projectiles[]) {
 	}
 }
 
-
 // -------------------------------------------------------------------------------------------------
 
 // ------------------------------------------------------------------------------------- LEADERBOARD
@@ -590,6 +674,30 @@ void addScoreToLeaderboard(const std::string& name, int score) {
 // -------------------------------------------------------------------------------------------------
 
 // -------------------------------------------------------------------------------------- COLLISIONI
+
+void upgradeProjectiles(ProjectileHitPower hitPower) {
+	currentProjectilePower = hitPower;
+	// Record the time when the bonus was awarded
+	bonusStartTime = std::chrono::steady_clock::now();
+}
+
+void downgradeProjectiles() {
+	currentProjectilePower = ProjectileHitPower::POWER_LOW;
+}
+
+void increaseScore(int amount) {
+	gameScore += amount;
+	bonusScore += amount;
+
+	if(bonusScore >= currentBonus.scoreThreshold) {
+		gameScore += currentBonus.extraScore;
+		bonusScore -= currentBonus.scoreThreshold;  // reset the bonus score
+		upgradeProjectiles(currentBonus.powerUpgrade);
+		// Set new random bonus
+		currentBonus = bonuses[rand() % 2];
+	}
+}
+
 
 bool hasCollision(Projectile& projectile, Asteroid& asteroid) {
 	int numPoints = numPointsFromSize(asteroid.size);
@@ -700,36 +808,36 @@ void handleCollisions(Projectile projectiles[], Asteroid asteroids[], Spaceship&
 
 						// Handle the asteroid depending on its size
 						switch(asteroids[astIdx].size) {
-						case BIG:
+						case AsteroidSize::SIZE_BIG:
 							// Split the big asteroid into two small ones
 							for(int k = 0; k < MAX_ASTEROIDS; ++k) {
 								if(!asteroids[k].active) {
 									asteroids[k] = asteroids[astIdx];  // Copy the current asteroid
 									asteroids[k].movX *= -1;  // Change the direction of the new asteroid
 									asteroids[k].movY *= -1;
-									asteroids[k].size = SMALL;
+									asteroids[k].size = SIZE_SMALL;
 									asteroids[k].active = true;
 									break;
 								}
 							}
 							asteroids[astIdx].movX *= -1;
 							asteroids[astIdx].movY *= 1;
-							asteroids[astIdx].size = MEDIUM;
+							asteroids[astIdx].size = AsteroidSize::SIZE_MEDIUM;
 							asteroids[astIdx].active = true;
-							gameScore += 2 * asteroids[astIdx].material;
+							increaseScore(2 * asteroids[astIdx].material);
 							break;
-						case MEDIUM:
+						case AsteroidSize::SIZE_MEDIUM:
 							// Split the big asteroid into two small ones
 							asteroids[astIdx].movX *= -1;
 							asteroids[astIdx].movY *= -1;
-							asteroids[astIdx].size = SMALL;
+							asteroids[astIdx].size = AsteroidSize::SIZE_SMALL;
 							asteroids[astIdx].active = true;
-							gameScore += 3 * asteroids[astIdx].material;
+							increaseScore(3 * asteroids[astIdx].material);
 							break;
-						case SMALL:
+						case AsteroidSize::SIZE_SMALL:
 							// The small asteroid is destroyed
 							asteroids[astIdx].active = false;
-							gameScore += 5 * asteroids[astIdx].material;
+							increaseScore(5 * asteroids[astIdx].material);
 							break;
 						}
 
@@ -751,6 +859,7 @@ void handleCollisions(Projectile projectiles[], Asteroid asteroids[], Spaceship&
 				if(spaceship.active) {
 					spaceship.active = false;
 					lives--;
+					bonusScore = 0;
 
 					// Start the respawn timer
 					spaceship.respawnTimer = 3.0f;  // 3 seconds respawn time
@@ -759,7 +868,6 @@ void handleCollisions(Projectile projectiles[], Asteroid asteroids[], Spaceship&
 		}
 	}
 }
-
 
 // ----------------------------------------------------------------------------------------- DISEGNO
 
@@ -801,7 +909,13 @@ void drawProjectiles(HDC hdc, Projectile projectiles[]) {
 			float lifeRemaining = (float)(PROJECTILE_LIFESPAN - projectiles[i].frame) / PROJECTILE_LIFESPAN;
 			// Fade the projectile to black as it gets close to the end of its life
 			int alpha = (int)(255 * std::fminf(lifeRemaining / 0.1f, 1.0f));  // Transparency
-			Gdiplus::SolidBrush brush(Gdiplus::Color(alpha, 255, 255, 255));  // White color with alpha transparency
+
+			// Get the color components from the projectile
+			int red = projectiles[i].color.GetR();
+			int green = projectiles[i].color.GetG();
+			int blue = projectiles[i].color.GetB();
+
+			Gdiplus::SolidBrush brush(Gdiplus::Color(alpha, red, green, blue));  // Use projectile's color with alpha transparency
 
 			graphics.FillEllipse(&brush, (int)(projectiles[i].posX - 2), (int)(projectiles[i].posY - 2), 4, 4);
 		}
@@ -990,7 +1104,7 @@ void Paint(HDC hdc) {
 			graphics.DrawString(str.c_str(), -1, &debugInfoFont, pointF, &debugInfoSolidBrush);
 		}
 
-		Gdiplus::Pen pen(asteroidMaterialColor[asteroids[i].material]);
+		Gdiplus::Pen pen(asteroids[i].color);
 		graphics.DrawPolygon(&pen, asteroids[i].points, numPoints);
 	}
 
@@ -1004,6 +1118,8 @@ void Paint(HDC hdc) {
 	stream << L"ACTIVE ASTEROIDS: " << activeAsteroids << std::endl;
 	stream << L"GAME SCORE: " << gameScore << std::endl;
 	stream << L"LIVES: " << lives << std::endl;
+	stream << L"\nBONUS: " << bonusScore << L"/" << currentBonus.scoreThreshold << std::endl;
+	stream << L"POWER: " << currentProjectilePower << std::endl;
 	std::wstring str = stream.str();
 
 	graphics.DrawString(str.c_str(), -1, &font, pointF, &solidBrush);
@@ -1061,6 +1177,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
 	Gdiplus::GdiplusStartupInput gdiplusStartupInput;
 	Gdiplus::GdiplusStartup(&m_gdiplusToken, &gdiplusStartupInput, NULL);
+	currentBonus = bonuses[rand() % 2];
 
 	// Initialize global strings
 	LoadStringW(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING);
@@ -1136,13 +1253,23 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 							if(!spaceship.active) {
 								// Respawn the spaceship
 								lives = 3;
-								difficultyLevel = 0;
+								difficultyLevel = 36;
 								createAsteroids(asteroids, screenWidth, screenHeight, difficultyLevel);
 								createSpaceship(spaceship, screenWidth, screenHeight);
 							}
 							isGameActive = true;
 						}
 					}
+				}
+
+				// Get the current time
+				std::chrono::steady_clock::time_point currentTime = std::chrono::steady_clock::now();
+
+				// Check if the bonus duration has passed
+				if(currentProjectilePower != ProjectileHitPower::POWER_LOW &&
+					std::chrono::duration_cast<std::chrono::seconds>(currentTime - bonusStartTime).count() >= 30) {
+					// If it has, downgrade the projectiles and reset the bonus score
+					downgradeProjectiles();
 				}
 
 				// Update game state
@@ -1172,6 +1299,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 						if(spaceship.respawnTimer <= 0) {
 							// Respawn the spaceship
 							createSpaceship(spaceship, screenWidth, screenHeight);
+							downgradeProjectiles();
 						}
 					}
 				}
