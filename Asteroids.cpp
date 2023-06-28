@@ -81,12 +81,21 @@ enum AsteroidSize {
 	BIG = 30
 };
 
+enum AsteroidMaterial {
+	ROCK = 1,
+	ICE = 2,
+	IRON = 4,
+	// add as many materials as you want
+};
+
 struct Asteroid {
 	float movX;
 	float movY;
 	AsteroidSize size;
+	AsteroidMaterial material;
 	Gdiplus::PointF points[MAX_POINTS]; // Each asteroid will have an array of points
 	bool active = false;
+	int hitPoints;
 	float centroidX;
 	float centroidY;
 	std::chrono::steady_clock::time_point lastSeen;
@@ -142,6 +151,8 @@ Spaceship spaceship;
 LevelDisplay levelDisplay;
 GameOverDisplay gameOverDisplay;
 std::vector<LeaderboardEntry> leaderboard;
+int asteroidMaterialHitPoints[] = {1, 8, 16};
+int asteroidMaterialColor[] = { Gdiplus::Color::SaddleBrown, Gdiplus::Color::LightBlue, Gdiplus::Color::Gray };
 
 std::vector<std::vector<Gdiplus::Point>> asteroidModels = {
 	{ {-20, -10}, {-10, -25}, {10, -20}, {20, -10}, {20, 10}, {10, 20}, {-10, 20} }, // Heptagon 1
@@ -235,13 +246,43 @@ void createAsteroid(Asteroid& asteroid, int screenWidth, int screenHeight)
 	asteroid.centroidX = sumX / numPoints;
 	asteroid.centroidY = sumY / numPoints;
 
+	// Determine asteroid type based on the difficultyLevel
+	if(difficultyLevel < 15) {
+		asteroid.material = ROCK;
+	}
+	else if(difficultyLevel < 35) {
+		// Generate a random number between 0 and 1
+		float random = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+		if(random < 0.5) {  // Half the time it should be ROCK
+			asteroid.material = ROCK;
+		}
+		else {  // The other half it should be ICE
+			asteroid.material = ICE;
+		}
+	}
+	else {
+		// Generate a random number between 0 and 1
+		float random = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+		float ironThreshold = static_cast <float> (difficultyLevel - 35) / 65.0f;
+		if(random < ironThreshold) {
+			asteroid.material = IRON;
+		}
+		else if(random < (ironThreshold + (1.0f - ironThreshold) / 2)) {
+			asteroid.material = ICE;
+		}
+		else {
+			asteroid.material = ROCK;
+		}
+	}
+	asteroid.hitPoints = asteroidMaterialHitPoints[asteroid.material];
+
 	asteroid.active = true;
 }
 
 //Initialize asteroids
 void createAsteroids(Asteroid asteroids[], int screenWidth, int screenHeight, int difficultyLevel) {
 	// Calculate number of asteroids based on difficulty
-	int numAsteroids = STARTING_ASTEROIDS + difficultyLevel * 5;
+	int numAsteroids = std::fminf(STARTING_ASTEROIDS + difficultyLevel * 5, 150);
 
 	for(int i = 0; i < numAsteroids; i++) {
 		// Size is inversely proportional to difficulty
@@ -649,6 +690,14 @@ void handleCollisions(Projectile projectiles[], Asteroid asteroids[], Spaceship&
 
 						createExplosion((int)projectiles[projIdx].posX, (int)projectiles[projIdx].posY);
 
+						// Decrease the hit points of the asteroid
+						asteroids[astIdx].hitPoints--;
+
+						// Check if the asteroid still has hit points
+						if(asteroids[astIdx].hitPoints > 0) {
+							continue; // The asteroid was not destroyed, so return
+						}
+
 						// Handle the asteroid depending on its size
 						switch(asteroids[astIdx].size) {
 						case BIG:
@@ -667,7 +716,7 @@ void handleCollisions(Projectile projectiles[], Asteroid asteroids[], Spaceship&
 							asteroids[astIdx].movY *= 1;
 							asteroids[astIdx].size = MEDIUM;
 							asteroids[astIdx].active = true;
-							gameScore += 2;
+							gameScore += 2 * asteroids[astIdx].material;
 							break;
 						case MEDIUM:
 							// Split the big asteroid into two small ones
@@ -675,12 +724,12 @@ void handleCollisions(Projectile projectiles[], Asteroid asteroids[], Spaceship&
 							asteroids[astIdx].movY *= -1;
 							asteroids[astIdx].size = SMALL;
 							asteroids[astIdx].active = true;
-							gameScore += 3;
+							gameScore += 3 * asteroids[astIdx].material;
 							break;
 						case SMALL:
 							// The small asteroid is destroyed
 							asteroids[astIdx].active = false;
-							gameScore += 5;
+							gameScore += 5 * asteroids[astIdx].material;
 							break;
 						}
 
@@ -915,7 +964,6 @@ void drawPausedGame(HDC hdc) {
 
 void Paint(HDC hdc) {
 	Gdiplus::Graphics graphics(hdc);
-	Gdiplus::Pen pen(Gdiplus::Color::White);
 	Gdiplus::Pen penSpaceship(Gdiplus::Color::White);
 
 	// Start drawing your debug information
@@ -935,12 +983,14 @@ void Paint(HDC hdc) {
 		if(DEBUG) {
 			std::wostringstream stream;
 			stream << i << std::endl;
+			stream << asteroids[i].hitPoints << std::endl;
 			std::wstring str = stream.str();
 			Gdiplus::PointF pointF(asteroids[i].centroidX, asteroids[i].centroidY);
 
 			graphics.DrawString(str.c_str(), -1, &debugInfoFont, pointF, &debugInfoSolidBrush);
 		}
 
+		Gdiplus::Pen pen(asteroidMaterialColor[asteroids[i].material]);
 		graphics.DrawPolygon(&pen, asteroids[i].points, numPoints);
 	}
 
