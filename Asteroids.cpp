@@ -11,6 +11,7 @@
 #include <string>
 #include <fstream>
 #include <sstream>
+#include <algorithm>    // std::min
 
 #include <objidl.h>
 #include <gdiplus.h>
@@ -51,6 +52,7 @@ const int MAX_DIFFICULTY_LEVEL = 100;
 const int MAX_LEVEL_FRAMES = 60;
 const int MAX_GAMEOVER_FRAMES = 180;
 const int LEADERBOARD_ENTRIES = 10;
+const int MAX_TIME_BONUS = 30;
 
 
 struct Debris {
@@ -154,6 +156,7 @@ int gameScore = 0;
 int difficultyLevel = 0;
 int activeAsteroids = 0;
 int lives = 3;
+long long timeBonus = 0;
 bool DEBUG = false;
 
 int bonusScore = 0;
@@ -173,7 +176,7 @@ GameOverDisplay gameOverDisplay;
 std::vector<LeaderboardEntry> leaderboard;
 int asteroidMaterialHitPoints[] = { 1, 8, 16 };
 int asteroidMaterialColor[] = { Gdiplus::Color::SaddleBrown, Gdiplus::Color::LightBlue, Gdiplus::Color::Gray };
-Gdiplus::Color projectilesColor[] = { Gdiplus::Color::White, Gdiplus::Color::Orange, Gdiplus::Color::Navy };
+int projectilesColor[] = { Gdiplus::Color::White, Gdiplus::Color::Orange, Gdiplus::Color::Navy };
 Bonus bonuses[2] = {
 	{1500, 200, ProjectileHitPower::POWER_MEDIUM},
 	{3500, 500, ProjectileHitPower::POWER_HIGH}
@@ -291,11 +294,11 @@ void createAsteroid(Asteroid& asteroid, int screenWidth, int screenHeight, bool 
 
 	float randomMovX = ((float)(rand() % 401) - 200) / 100;
 	if(randomMovX == 0) {
-		randomMovX = (rand() % 2) ? 0.1 : -0.1;
+		randomMovX = (float)((rand() % 2) ? 0.1 : -0.1);
 	}
 	float randomMovY = ((float)(rand() % 401) - 200) / 100;
 	if(randomMovY == 0) {
-		randomMovY = (rand() % 2) ? 0.1 : -0.1;
+		randomMovY = (float)((rand() % 2) ? 0.1 : -0.1);
 	}
 
 	asteroid.movX = randomMovX;
@@ -313,8 +316,8 @@ void createAsteroid(Asteroid& asteroid, int screenWidth, int screenHeight, bool 
 		float angle = (float)(((float)j / numPoints) * 2 * PI);
 		float randomRadius = radius + static_cast<float>(rand()) / RAND_MAX * perturbation - perturbation / 2;
 
-		asteroid.points[j].X = (int)(randomPosX + randomRadius * cos(angle));
-		asteroid.points[j].Y = (int)(randomPosY + randomRadius * sin(angle));
+		asteroid.points[j].X = (float)(randomPosX + randomRadius * cos(angle));
+		asteroid.points[j].Y = (float)(randomPosY + randomRadius * sin(angle));
 	}
 
 	float sumX = 0, sumY = 0;
@@ -364,7 +367,7 @@ void createAsteroid(Asteroid& asteroid, int screenWidth, int screenHeight, bool 
 //Initialize asteroids
 void createAsteroids(Asteroid asteroids[], int screenWidth, int screenHeight, int difficultyLevel) {
 	// Calculate number of asteroids based on difficulty
-	int numAsteroids = std::fminf(STARTING_ASTEROIDS + difficultyLevel * 5, 150);
+	int numAsteroids = (int)std::fminf((float)(STARTING_ASTEROIDS + difficultyLevel * 5.0f), 150.0f);
 
 	for(int i = 0; i < numAsteroids; i++) {
 		// Size is inversely proportional to difficulty
@@ -385,9 +388,9 @@ void createSpaceship(Spaceship& spaceship, int screenWidth, int screenHeight) {
 	spaceship.acceleration = 0.0f;  // acceleration
 	spaceship.rotation = 0.0f;  // rotation
 
-	spaceship.points[0] = Gdiplus::PointF(screenWidth / 2, screenHeight / 2 - 20);
-	spaceship.points[1] = Gdiplus::PointF(screenWidth / 2 - 10, screenHeight / 2 + 10);
-	spaceship.points[2] = Gdiplus::PointF(screenWidth / 2 + 10, screenHeight / 2 + 10);
+	spaceship.points[0] = Gdiplus::PointF(screenWidth / 2.0f, screenHeight / 2.0f - 20);
+	spaceship.points[1] = Gdiplus::PointF(screenWidth / 2.0f - 10, screenHeight / 2.0f + 10);
+	spaceship.points[2] = Gdiplus::PointF(screenWidth / 2.0f + 10, screenHeight / 2.0f + 10);
 
 	spaceship.originalPoints[0] = spaceship.points[0];
 	spaceship.originalPoints[1] = spaceship.points[1];
@@ -495,8 +498,8 @@ void rotatePoint(Gdiplus::PointF& point, Gdiplus::PointF origin, double angle) {
 	double newY = point.X * sin + point.Y * cos;
 
 	// Translate point back:
-	point.X = newX + origin.X;
-	point.Y = newY + origin.Y;
+	point.X = (float)(newX + origin.X);
+	point.Y = (float)(newY + origin.Y);
 }
 
 // Function to update the position XY of the asteroid
@@ -517,10 +520,10 @@ void updateAsteroid(Asteroid& asteroid, int screenWidth, int screenHeight) {
 		asteroid.points[i].Y += asteroid.movY;
 
 		// Update min/max
-		if(asteroid.points[i].X < minX) minX = asteroid.points[i].X;
-		if(asteroid.points[i].X > maxX) maxX = asteroid.points[i].X;
-		if(asteroid.points[i].Y < minY) minY = asteroid.points[i].Y;
-		if(asteroid.points[i].Y > maxY) maxY = asteroid.points[i].Y;
+		if(asteroid.points[i].X < minX) minX = (int)asteroid.points[i].X;
+		if(asteroid.points[i].X > maxX) maxX = (int)asteroid.points[i].X;
+		if(asteroid.points[i].Y < minY) minY = (int)asteroid.points[i].Y;
+		if(asteroid.points[i].Y > maxY) maxY = (int)asteroid.points[i].Y;
 
 		sumX += asteroid.points[i].X;
 		sumY += asteroid.points[i].Y;
@@ -583,7 +586,7 @@ void updateSpaceship(Spaceship& spaceship, int screenWidth, int screenHeight) {
 		spaceship.points[i].Y += spaceship.posY - screenHeight / 2;
 
 		// Rotate points around the spaceship center
-		rotatePoint(spaceship.points[i], Gdiplus::PointF(spaceship.posX, spaceship.posY), spaceship.rotation);
+		rotatePoint(spaceship.points[i], Gdiplus::PointF((float)spaceship.posX, (float)spaceship.posY), spaceship.rotation);
 	}
 }
 
@@ -683,6 +686,7 @@ void upgradeProjectiles(ProjectileHitPower hitPower) {
 
 void downgradeProjectiles() {
 	currentProjectilePower = ProjectileHitPower::POWER_LOW;
+	timeBonus = 0;
 }
 
 void increaseScore(int amount) {
@@ -948,7 +952,7 @@ void drawRestartGame(HDC hdc) {
 		// Define the y-offset from the top of the window
 		float textTopOffset = screenHeight * 0.2f; // Adjust this as needed
 		Gdiplus::RectF leaderboardRectF(screenWidth * 0.2f, textTopOffset, screenWidth * 0.6f, screenHeight * 0.6f);
-		Gdiplus::RectF rectF(0, leaderboardRectF.Height / 2 + 20, screenWidth, screenHeight);
+		Gdiplus::RectF rectF(0, leaderboardRectF.Height / 2 + 20, (float)screenWidth, (float)screenHeight);
 
 		// Create a StringFormat object
 		Gdiplus::StringFormat stringFormat;
@@ -987,7 +991,7 @@ void drawLevelDisplay(HDC hdc, LevelDisplay& levelDisplay) {
 		Gdiplus::Font        font(&fontFamily, 24 * scale, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
 
 		// Create a rectangle for the string
-		Gdiplus::RectF rectF(0, 0, screenWidth, screenHeight);
+		Gdiplus::RectF rectF(0, 0, (float)screenWidth, (float)screenHeight);
 
 		// Create a StringFormat object
 		Gdiplus::StringFormat stringFormat;
@@ -1025,7 +1029,7 @@ void drawGameOverDisplay(HDC hdc, GameOverDisplay& gameOverDisplay) {
 		Gdiplus::Font        font(&fontFamily, 24 * scale, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
 
 		// Create a rectangle for the string
-		Gdiplus::RectF rectF(0, 0, screenWidth, screenHeight);
+		Gdiplus::RectF rectF(0, 0, (float)screenWidth, (float)screenHeight);
 
 		// Create a StringFormat object
 		Gdiplus::StringFormat stringFormat;
@@ -1060,7 +1064,7 @@ void drawPausedGame(HDC hdc) {
 		Gdiplus::Font        font(&fontFamily, 28, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
 
 		// Define the y-offset from the top of the window
-		Gdiplus::RectF rectF(0, 0, screenWidth, screenHeight);
+		Gdiplus::RectF rectF(0, 0, (float)screenWidth, (float)screenHeight);
 
 		// Create a StringFormat object
 		Gdiplus::StringFormat stringFormat;
@@ -1084,7 +1088,7 @@ void Paint(HDC hdc) {
 	Gdiplus::Font font(L"Courier New", 14);
 	Gdiplus::Font debugInfoFont(L"Courier New", 8);
 	Gdiplus::PointF pointF(10.0f, 10.0f);
-	Gdiplus::PointF debugInfoPointF(screenWidth - 300, 10.0f);
+	Gdiplus::PointF debugInfoPointF((float)screenWidth - 300, 10.0f);
 	Gdiplus::SolidBrush solidBrush(Gdiplus::Color::LimeGreen);
 	Gdiplus::SolidBrush debugInfoSolidBrush(Gdiplus::Color::Red);
 
@@ -1119,6 +1123,9 @@ void Paint(HDC hdc) {
 	stream << L"GAME SCORE: " << gameScore << std::endl;
 	stream << L"LIVES: " << lives << std::endl;
 	stream << L"\nBONUS: " << bonusScore << L"/" << currentBonus.scoreThreshold << std::endl;
+	if(currentProjectilePower != ProjectileHitPower::POWER_LOW) {
+		stream << L"TIME REMAINING: " << MAX_TIME_BONUS - timeBonus << std::endl;
+	}
 	stream << L"POWER: " << currentProjectilePower << std::endl;
 	std::wstring str = stream.str();
 
@@ -1253,7 +1260,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 							if(!spaceship.active) {
 								// Respawn the spaceship
 								lives = 3;
-								difficultyLevel = 36;
+								difficultyLevel = 0;
 								createAsteroids(asteroids, screenWidth, screenHeight, difficultyLevel);
 								createSpaceship(spaceship, screenWidth, screenHeight);
 							}
@@ -1264,10 +1271,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
 				// Get the current time
 				std::chrono::steady_clock::time_point currentTime = std::chrono::steady_clock::now();
+				timeBonus = std::chrono::duration_cast<std::chrono::seconds>(currentTime - bonusStartTime).count();
 
 				// Check if the bonus duration has passed
-				if(currentProjectilePower != ProjectileHitPower::POWER_LOW &&
-					std::chrono::duration_cast<std::chrono::seconds>(currentTime - bonusStartTime).count() >= 30) {
+				if(currentProjectilePower != ProjectileHitPower::POWER_LOW && timeBonus >= MAX_TIME_BONUS) {
 					// If it has, downgrade the projectiles and reset the bonus score
 					downgradeProjectiles();
 				}
