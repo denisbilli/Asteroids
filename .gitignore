@@ -30,3 +30,14 @@
 *.exe
 *.out
 *.app
+*.dat
+
+# Visual Studio
+.vs/*
+x64/*
+x86/*
+Debug/*
+Release/*
+
+# Debug data
+*.pdb
