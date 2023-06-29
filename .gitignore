@@ -41,3 +41,4 @@ Release/*
 
 # Debug data
 *.pdb
+/packages
