@@ -38,7 +38,7 @@ x64/*
 x86/*
 Debug/*
 Release/*
+/packages
 
 # Debug data
 *.pdb
-/packages

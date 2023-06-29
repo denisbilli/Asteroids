@@ -11,7 +11,16 @@
 #include <string>
 #include <fstream>
 #include <sstream>
-#include <algorithm>    // std::min
+#include <algorithm>
+#include <thread>
+
+#pragma comment(lib, "wldap32.lib" )
+#pragma comment(lib, "crypt32.lib" )
+#pragma comment(lib, "Ws2_32.lib")
+
+#define CURL_STATICLIB 
+#include <curl/curl.h>
+#include <nlohmann/json.hpp>
 
 #include <objidl.h>
 #include <gdiplus.h>
@@ -33,7 +42,6 @@ ATOM                MyRegisterClass(HINSTANCE hInstance);
 BOOL                InitInstance(HINSTANCE, int);
 LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
-
 
 // ---------------------------------------------------------------------------------- STRUTTURE DATI
 
@@ -631,7 +639,50 @@ void updateProjectiles(Projectile projectiles[]) {
 
 // ------------------------------------------------------------------------------------- LEADERBOARD
 
-void saveLeaderboard(const std::string& filename) {
+size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::string* s) {
+	size_t newLength = size * nmemb;
+	try {
+		s->append((char*)contents, newLength);
+	}
+	catch(std::bad_alloc& _) {
+		// handle memory problem
+		return 0;
+	}
+	return newLength;
+}
+
+std::string makeHttpRequest(const std::string& url, const std::string& postFields = "", long timeout = 5) {
+	std::string response;
+
+	CURL* curl = curl_easy_init();
+	if(curl) {
+		curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+		curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+		curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout);  // Set timeout
+
+		struct curl_slist* headers = NULL;
+		headers = curl_slist_append(headers, "Content-Type: application/json");
+
+		if(!postFields.empty()) {
+			curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postFields.c_str());
+			curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+		}
+
+		CURLcode res = curl_easy_perform(curl);
+		if(res != CURLE_OK) {
+			curl_slist_free_all(headers);
+			throw std::runtime_error(curl_easy_strerror(res));
+		}
+
+		curl_easy_cleanup(curl);
+		curl_slist_free_all(headers);
+	}
+
+	return response;
+}
+
+void saveLeaderboardToFile(const std::string& filename) {
 	std::ofstream file(filename);
 
 	for(const LeaderboardEntry& entry : leaderboard) {
@@ -641,7 +692,7 @@ void saveLeaderboard(const std::string& filename) {
 	file.close();
 }
 
-void loadLeaderboard(const std::string& filename) {
+void loadLeaderboardFromFile(const std::string& filename) {
 	std::ifstream file(filename);
 	std::string line;
 
@@ -660,18 +711,81 @@ void loadLeaderboard(const std::string& filename) {
 	file.close();
 }
 
-void addScoreToLeaderboard(const std::string& name, int score) {
-	leaderboard.push_back({ name, score });
+// This call RESETS the online leaderboard. Plese NEVER use this!!!
+[[deprecated]]
+void saveLeaderboardToNetwork(const std::string& apiUrl, const std::vector<LeaderboardEntry>& leaderboard) {
+	nlohmann::json j;
 
-	// Sort the leaderboard in descending order by score
-	std::sort(leaderboard.begin(), leaderboard.end(), [](const LeaderboardEntry& a, const LeaderboardEntry& b) {
-		return a.score > b.score;
+	for(const auto& entry : leaderboard) {
+		j.push_back({ {"name", entry.name}, {"score", entry.score} });
+	}
+
+	std::string response = makeHttpRequest(apiUrl, j.dump());
+	// handle response
+}
+
+std::vector<LeaderboardEntry> loadLeaderboardFromNetwork(const std::string& apiUrl) {
+	std::string response = makeHttpRequest(apiUrl);
+
+	nlohmann::json j = nlohmann::json::parse(response);
+	std::vector<LeaderboardEntry> leaderboard;
+
+	for(const auto& item : j) {
+		leaderboard.push_back({ item["name"].get<std::string>(), item["score"].get<int>() });
+	}
+
+	return leaderboard;
+}
+
+// This call RESETS the online leaderboard. Plese NEVER use this!!!
+[[deprecated]]
+void asyncSaveLeaderboard(const std::string& apiUrl, const std::vector<LeaderboardEntry>& leaderboard) {
+	std::thread t([=]() {
+		//saveLeaderboardToNetwork(apiUrl, leaderboard);
+	});
+	t.detach();  // Detach the thread so it runs independently and doesn't need to be joined.
+}
+
+std::vector<LeaderboardEntry> asyncLoadLeaderboard(const std::string& apiUrl, const std::string& fallbackFilename) {
+	std::vector<LeaderboardEntry> leaderboard;
+	std::thread t([&]() {
+		try {
+			leaderboard = loadLeaderboardFromNetwork(apiUrl);
+		}
+		catch(const std::exception& e) {
+			// Network error, fall back to local file loading
+			loadLeaderboardFromFile(fallbackFilename);
+		}
+	});
+	t.join(); // Join the thread. This will block until the request completes.
+	return leaderboard;
+}
+
+//void addScoreToLeaderboard(const std::string& name, int score) {
+//	leaderboard.push_back({ name, score });
+//
+//	// Sort the leaderboard in descending order by score
+//	std::sort(leaderboard.begin(), leaderboard.end(), [](const LeaderboardEntry& a, const LeaderboardEntry& b) {
+//		return a.score > b.score;
+//	});
+//
+//	// Keep only the top 10 scores
+//	if(leaderboard.size() > 20) {
+//		leaderboard.resize(20);
+//	}
+//}
+
+void addScoreToLeaderboard(const std::string& apiUrl, const std::string& name, int score) {
+	std::thread t([&]() {
+		nlohmann::json j;
+		j.push_back({ {"name", name}, {"score", score} });
+
+		// The exception will be handled by the exception handler in the thread function
+		std::string response = makeHttpRequest(apiUrl, j.dump());
 	});
 
-	// Keep only the top 10 scores
-	if(leaderboard.size() > 20) {
-		leaderboard.resize(20);
-	}
+	// Detach the thread so the main game logic doesn't wait for this to finish
+	t.detach();
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -1200,7 +1314,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	HACCEL hAccelTable = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDC_ASTEROIDS));
 
 	MSG msg;
-	loadLeaderboard("leaderboard.dat");
+	//loadLeaderboardFromFile("leaderboard.dat");
+	//asyncSaveLeaderboard("http://ec2-54-85-160-157.compute-1.amazonaws.com:5000/save", leaderboard);
+	asyncLoadLeaderboard("http://ec2-54-85-160-157.compute-1.amazonaws.com:5000/load", "leaderboard.dat");
 
 	// Main message loop:
 	while(true)
@@ -1295,7 +1411,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 				handleCollisions(projectiles, asteroids, spaceship);
 
 				if(lives == 0) {
-					addScoreToLeaderboard("PLAYER", gameScore);
+					addScoreToLeaderboard("http://ec2-54-85-160-157.compute-1.amazonaws.com:5000/add", "PLAYER", gameScore);
 					isGameActive = false;
 					createGameOver(gameOverDisplay);
 				}
@@ -1327,7 +1443,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	}
 
 	Gdiplus::GdiplusShutdown(m_gdiplusToken);
-	saveLeaderboard("leaderboard.dat");
+	saveLeaderboardToFile("leaderboard.dat");
 
 	return (int)msg.wParam;
 }
